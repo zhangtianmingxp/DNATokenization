@@ -4,6 +4,7 @@
 
 import json
 import os
+import shutil
 
 import random
 import time
@@ -35,6 +36,11 @@ import torch.backends
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
+if "CC" not in os.environ:
+    cc = shutil.which("cc") or shutil.which("x86_64-conda-linux-gnu-cc")
+    if cc is not None:
+        os.environ["CC"] = cc
 
 OmegaConf.register_new_resolver('eval', eval)
 OmegaConf.register_new_resolver('div_up', lambda x, y: (x + y - 1) // y)
@@ -662,6 +668,8 @@ def create_trainer(config, **kwargs):
 
 
 def fsspec_exists(filename):
+    if filename is None:
+        return False
     fs, _ = fsspec.core.url_to_fs(filename)
     return fs.exists(filename)
 

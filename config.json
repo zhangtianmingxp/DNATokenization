@@ -1,0 +1,197 @@
+{
+    "train": {
+        "seed": 2222,
+        "interval": "step",
+        "monitor": "val/loss",
+        "mode": "min",
+        "test": false,
+        "debug": false,
+        "ignore_warnings": false,
+        "optimizer_param_grouping": {
+            "bias_weight_decay": false,
+            "normalization_weight_decay": false
+        },
+        "state": {
+            "mode": null,
+            "n_context": 0,
+            "n_context_eval": 0
+        },
+        "ckpt": null,
+        "disable_dataset": false,
+        "validate_at_start": false,
+        "pretrained_model_path": null,
+        "pretrained_model_strict_load": true,
+        "pretrained_model_state_hook": {
+            "_name_": null
+        },
+        "post_init_hook": {
+            "_name_": null
+        },
+        "layer_decay": {
+            "_name_": null,
+            "decay": 0.7
+        },
+        "gpu_mem": 16,
+        "global_batch_size": 2
+    },
+    "wandb": null,
+    "trainer": {
+        "_target_": "pytorch_lightning.Trainer",
+        "devices": 1,
+        "accelerator": "gpu",
+        "accumulate_grad_batches": 1,
+        "max_epochs": null,
+        "gradient_clip_val": 1.0,
+        "log_every_n_steps": 1,
+        "limit_train_batches": 2,
+        "limit_val_batches": 0,
+        "num_sanity_val_steps": 0,
+        "num_nodes": 1,
+        "max_steps": 2,
+        "precision": 32,
+        "enable_checkpointing": true
+    },
+    "dataset": {
+        "_name_": "hg38",
+        "bed_file": "data/hg38_tiny/human-sequences-tiny.bed",
+        "fasta_file": "data/hg38_tiny/hg38_tiny.fa",
+        "dataset_name": "hg38",
+        "tokenizer_name": "char",
+        "cache_dir": null,
+        "max_length": 64,
+        "add_eos": true,
+        "batch_size": 2,
+        "batch_size_eval": 2,
+        "num_workers": 0,
+        "shuffle": false,
+        "repeat_penalty": 0.0,
+        "repeat_bed_file": null,
+        "detect_simple_repeats": "/workspace/caduceus_proj/data/hg38/hg38_repeats.bed",
+        "min_repeat_length": 3,
+        "max_repeat_length": 20,
+        "max_length_val": 64,
+        "max_length_test": 64,
+        "pad_max_length": null,
+        "rc_aug": false,
+        "use_fixed_len_val": false,
+        "mlm": true,
+        "mlm_probability": 0.15
+    },
+    "optimizer": {
+        "_name_": "adamw",
+        "lr": 0.001,
+        "weight_decay": 0.0,
+        "betas": [
+            0.9,
+            0.95
+        ]
+    },
+    "scheduler": {
+        "_name_": "cosine_warmup_timm",
+        "t_in_epochs": false,
+        "t_initial": 1.8,
+        "lr_min": 0.0001,
+        "warmup_lr_init": 1e-06,
+        "warmup_t": 0.2,
+        "warmup_prefix": true
+    },
+    "callbacks": {
+        "learning_rate_monitor": {
+            "logging_interval": "step"
+        },
+        "timer": {
+            "step": true,
+            "inter_step": false,
+            "epoch": true,
+            "val": true
+        },
+        "params": {
+            "total": true,
+            "trainable": true,
+            "fixed": true
+        },
+        "model_checkpoint": {
+            "monitor": "val/loss",
+            "mode": "min",
+            "save_top_k": 0,
+            "save_last": false,
+            "dirpath": "checkpoints/",
+            "filename": "val/loss",
+            "auto_insert_metric_name": false,
+            "verbose": true
+        },
+        "model_checkpoint_every_n_steps": {
+            "monitor": "train/loss",
+            "mode": "min",
+            "save_top_k": 0,
+            "save_last": false,
+            "dirpath": "checkpoints/",
+            "filename": "train/loss",
+            "auto_insert_metric_name": false,
+            "verbose": true,
+            "every_n_train_steps": 100
+        }
+    },
+    "task": {
+        "_name_": "lm",
+        "loss": {
+            "_name_": "cross_entropy",
+            "ignore_index": 4
+        },
+        "torchmetrics": [
+            "perplexity",
+            "num_tokens"
+        ]
+    },
+    "encoder": null,
+    "decoder": null,
+    "loader": {
+        "num_workers": 0,
+        "pin_memory": false,
+        "drop_last": true
+    },
+    "model": {
+        "_name_": "hnet_twostage",
+        "config": {
+            "_target_": "hnet_twostage.configuration_hnet.HNetConfig",
+            "d_model": 16,
+            "n_layer": 3,
+            "n_enc_layer": 1,
+            "n_main_layer": 1,
+            "n_dec_layer": 1,
+            "vocab_size": 12,
+            "tokenizer_type": "default",
+            "ssm_cfg": {
+                "d_state": 4,
+                "d_conv": 2,
+                "expand": 1,
+                "dt_rank": "auto",
+                "dt_min": 0.001,
+                "dt_max": 0.1,
+                "dt_init": "random",
+                "dt_scale": 1.0,
+                "dt_init_floor": 0.0001,
+                "conv_bias": true,
+                "bias": false,
+                "use_fast_path": false
+            },
+            "rms_norm": false,
+            "fused_add_norm": false,
+            "residual_in_fp32": false,
+            "pad_vocab_size_multiple": 8,
+            "norm_epsilon": 1e-05,
+            "initializer_cfg": {
+                "initializer_range": 0.02,
+                "rescale_prenorm_residual": true,
+                "n_residuals_per_layer": 1
+            },
+            "bidirectional": true,
+            "bidirectional_strategy": "add",
+            "bidirectional_weight_tie": true,
+            "target_ratio_stage1": 0.5,
+            "target_ratio_stage2": 0.5,
+            "transformer_n_head": 4,
+            "transformer_mlp_mult": 2
+        }
+    }
+}

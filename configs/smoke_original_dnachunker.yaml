@@ -1,0 +1,38 @@
+model:
+  d_model: 16
+  vocab_size: 12
+  n_enc_layer: 1
+  n_main_layer: 1
+  n_dec_layer: 1
+  transformer_n_head: 4
+  transformer_mlp_mult: 2
+  tokenizer_type: default
+  ssm_cfg:
+    d_state: 4
+    d_conv: 2
+    expand: 1
+    dt_rank: auto
+    use_fast_path: false
+  rms_norm: false
+  fused_add_norm: false
+  residual_in_fp32: false
+  pad_vocab_size_multiple: 8
+  norm_epsilon: 1.0e-5
+  initializer_cfg:
+    initializer_range: 0.02
+    rescale_prenorm_residual: true
+    n_residuals_per_layer: 1
+  bidirectional: true
+  bidirectional_strategy: add
+  bidirectional_weight_tie: true
+  target_ratio_stage1: 0.5
+  target_ratio_stage2: 0.5
+  motif_ratio: 0.0
+  pad_token_id: -100
+
+smoke:
+  batch_size: 2
+  seq_len: 64
+  dna_token_ids: [7, 8, 9, 10, 11]
+  seed: 13
+  run_backward: true

@@ -1,0 +1,85 @@
+# @package _global_
+defaults:
+  - /experiment/hg38/hnet_twostage
+
+wandb: null
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ./outputs/repro_tiny_hnet_twostage
+
+train:
+  seed: 2222
+  test: false
+  ckpt: null
+  global_batch_size: 2
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  max_steps: 2
+  max_epochs: null
+  precision: 32
+  log_every_n_steps: 1
+  limit_train_batches: 2
+  limit_val_batches: 0
+  num_sanity_val_steps: 0
+  enable_checkpointing: true
+
+callbacks:
+  model_checkpoint:
+    save_top_k: 0
+    save_last: false
+  model_checkpoint_every_n_steps:
+    save_top_k: 0
+    save_last: false
+
+dataset:
+  bed_file: data/hg38_tiny/human-sequences-tiny.bed
+  fasta_file: data/hg38_tiny/hg38_tiny.fa
+  batch_size: 2
+  batch_size_eval: 2
+  max_length: 64
+  max_length_val: 64
+  max_length_test: 64
+  tokenizer_name: char
+  add_eos: true
+  mlm: true
+  mlm_probability: 0.15
+  num_workers: 0
+  shuffle: false
+
+loader:
+  num_workers: 0
+  pin_memory: false
+  drop_last: true
+
+model:
+  config:
+    d_model: 16
+    n_enc_layer: 1
+    n_main_layer: 1
+    n_dec_layer: 1
+    n_layer: 3
+    vocab_size: 12
+    transformer_n_head: 4
+    transformer_mlp_mult: 2
+    tokenizer_type: default
+    target_ratio_stage1: 0.5
+    target_ratio_stage2: 0.5
+    ssm_cfg:
+      d_state: 4
+      d_conv: 2
+      expand: 1
+      dt_rank: auto
+      use_fast_path: false
+    rms_norm: false
+    fused_add_norm: false
+    residual_in_fp32: false
+    pad_vocab_size_multiple: 8
+
+optimizer:
+  lr: 1.0e-3
+  weight_decay: 0.0

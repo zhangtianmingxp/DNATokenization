@@ -1,0 +1,20 @@
+seed: 13
+device: auto
+data:
+  num_sequences: 128
+  seq_len: 96
+  batch_size: 8
+  mask_probability: 0.15
+model:
+  d_model: 32
+  local_kernel_size: 5
+  transformer_layers: 1
+  transformer_heads: 4
+  dropout: 0.1
+  boundary_threshold: 0.5
+optim:
+  lr: 0.001
+  weight_decay: 0.01
+train:
+  steps: 10
+  log_every: 1
