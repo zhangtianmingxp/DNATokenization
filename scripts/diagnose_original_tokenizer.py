@@ -21,9 +21,9 @@ from hnet_twostage.configuration_hnet import HNetConfig  # noqa: E402
 from hnet_twostage.modeling_hnet import HNetTransformerForMaskedLM  # noqa: E402
 from src.diagnostics.synthetic_regions import (  # noqa: E402
     REGION_NAMES,
+    SYNTHETIC_MODES,
     SyntheticRegions,
-    make_random_input_ids,
-    make_region_input_ids,
+    make_synthetic_input_ids,
 )
 
 
@@ -65,14 +65,30 @@ def list_ints(tensor: torch.Tensor) -> list[int]:
 
 
 def region_boundary_density(boundaries: torch.Tensor, region_ids: torch.Tensor) -> dict[str, float]:
+    return region_scalar_mean(boundaries, region_ids)
+
+
+def region_scalar_mean(values: torch.Tensor, region_ids: torch.Tensor) -> dict[str, float]:
     result = {}
-    boundary_values = boundaries.detach().float().cpu()
+    scalar_values = values.detach().float().cpu()
+    if scalar_values.shape != region_ids.shape:
+        scalar_values = scalar_values[..., : region_ids.shape[-1]]
     region_values = region_ids.detach().cpu()
     for region_id, region_name in REGION_NAMES.items():
         mask = region_values == region_id
         if mask.any():
-            result[region_name] = float(boundary_values[mask].mean().item())
+            result[region_name] = float(scalar_values[mask].mean().item())
     return result
+
+
+def vector_stats(values: torch.Tensor) -> dict[str, float | int]:
+    tensor = values.detach().float().cpu()
+    return {
+        "mean": float(tensor.mean().item()),
+        "std": float(tensor.std(unbiased=False).item()),
+        "min": int(tensor.min().item()),
+        "max": int(tensor.max().item()),
+    }
 
 
 def motif_break_rate(boundaries: torch.Tensor, motif_spans: list[list[tuple[int, int]]]) -> float | None:
@@ -89,6 +105,19 @@ def motif_break_rate(boundaries: torch.Tensor, motif_spans: list[list[tuple[int,
     if total == 0:
         return None
     return broken / total
+
+
+def motif_internal_boundary_counts(boundaries: torch.Tensor, motif_spans: list[list[tuple[int, int]]]) -> list[int]:
+    boundary_values = boundaries.detach().bool().cpu()
+    counts = []
+    for batch_idx, spans in enumerate(motif_spans):
+        per_sample = 0
+        for start, end in spans:
+            if end - start <= 1:
+                continue
+            per_sample += int(boundary_values[batch_idx, start + 1 : end].sum().item())
+        counts.append(per_sample)
+    return counts
 
 
 class TokenizerDiagnosticHooks:
@@ -145,11 +174,7 @@ def make_inputs(
     seq_len: int,
     device: torch.device,
 ) -> SyntheticRegions:
-    if mode == "random":
-        return make_random_input_ids(batch_size, seq_len, device)
-    if mode == "regions":
-        return make_region_input_ids(batch_size, seq_len, device)
-    raise ValueError(f"Unknown synthetic mode: {mode}")
+    return make_synthetic_input_ids(mode, batch_size, seq_len, device)
 
 
 def summarize_stage(
@@ -173,22 +198,43 @@ def summarize_stage(
         boundaries = downsample_record["boundaries"]
         chunk_lengths = downsample_record["chunk_lengths"]
         source_len = int(boundaries.shape[1])
-        avg_chunks = float(chunk_lengths.detach().float().mean().cpu().item())
+        chunk_lengths_float = chunk_lengths.detach().float()
+        avg_chunks = float(chunk_lengths_float.mean().cpu().item())
+        per_sample_avg_chunk_length = source_len / chunk_lengths_float.clamp(min=1)
+        per_sample_compression = per_sample_avg_chunk_length
+        chunk_stats = vector_stats(chunk_lengths)
+        avg_chunk_stats = vector_stats(per_sample_avg_chunk_length)
+        compression_stats = vector_stats(per_sample_compression)
         summary["post_merge_boundary_density"] = float(boundaries.detach().float().mean().cpu().item())
         summary["num_chunks_per_sample"] = list_ints(chunk_lengths)
         summary["num_chunks_mean"] = avg_chunks
-        summary["chunk_length_min"] = int(chunk_lengths.detach().min().cpu().item())
-        summary["chunk_length_max"] = int(chunk_lengths.detach().max().cpu().item())
+        summary["num_chunks_std"] = chunk_stats["std"]
+        summary["num_chunks_min"] = chunk_stats["min"]
+        summary["num_chunks_max"] = chunk_stats["max"]
+        summary["chunk_length_min"] = chunk_stats["min"]
+        summary["chunk_length_max"] = chunk_stats["max"]
         summary["average_chunk_length"] = float(source_len / avg_chunks) if avg_chunks > 0 else 0.0
+        summary["average_chunk_length_mean"] = avg_chunk_stats["mean"]
+        summary["average_chunk_length_std"] = avg_chunk_stats["std"]
         summary["compression_ratio"] = float(source_len / avg_chunks) if avg_chunks > 0 else 0.0
+        summary["compression_ratio_mean"] = compression_stats["mean"]
+        summary["compression_ratio_std"] = compression_stats["std"]
         summary["chunked_hidden_shape"] = [int(v) for v in downsample_record["chunks_shape"].detach().cpu().tolist()]
         summary["source_hidden_shape"] = [int(v) for v in downsample_record["source_hidden_shape"].detach().cpu().tolist()]
         summary["chunked_hidden_requires_grad"] = bool(int(downsample_record["chunks_requires_grad"].detach().cpu().item()))
 
         if stage == "stage1" and synthetic.region_ids is not None:
             summary["region_boundary_density"] = region_boundary_density(boundaries, synthetic.region_ids)
+            if routing_record is not None:
+                probabilities = routing_record["probabilities"]
+                summary["region_boundary_probability_mean"] = region_scalar_mean(probabilities, synthetic.region_ids)
             motif_rate = motif_break_rate(boundaries, synthetic.motif_spans)
             summary["motif_break_rate"] = motif_rate
+            motif_counts = motif_internal_boundary_counts(boundaries, synthetic.motif_spans)
+            summary["motif_internal_boundary_count_per_sample"] = motif_counts
+            summary["motif_internal_boundary_count_mean"] = (
+                float(sum(motif_counts) / len(motif_counts)) if motif_counts else None
+            )
 
     return summary
 
@@ -200,6 +246,7 @@ def run_diagnostics(
     seq_len: int | None = None,
     seed: int | None = None,
     synthetic_mode: str = "random",
+    run_backward: bool = False,
 ) -> dict[str, Any]:
     ensure_triton_compiler()
     cfg = load_config(REPO_ROOT / config)
@@ -239,12 +286,14 @@ def run_diagnostics(
         "model_class": model.__class__.__name__,
         "device": str(torch_device),
         "synthetic_mode": synthetic_mode,
+        "synthetic_metadata": synthetic.metadata,
         "input_shape": list(input_ids.shape),
         "logits_shape": list(logits.shape),
         "has_loss": loss is not None,
         "loss": float(loss.detach().cpu().item()) if loss is not None else None,
         "has_ratio_loss": ratio_loss is not None,
         "ratio_loss": float(ratio_loss.detach().cpu().item()) if ratio_loss is not None else None,
+        "backward_run": False,
         "hidden_states_type": type(hidden_states).__name__,
         "hidden_states_entries": len(hidden_states) if isinstance(hidden_states, list) else None,
         "stages": {
@@ -268,6 +317,9 @@ def run_diagnostics(
     stage1 = diagnostics["stages"]["stage1"]
     diagnostics["compression_ratio"] = stage1.get("compression_ratio")
     diagnostics["chunked_hidden_shape"] = stage1.get("chunked_hidden_shape")
+    if run_backward and loss is not None:
+        loss.backward()
+        diagnostics["backward_run"] = True
     return diagnostics
 
 
@@ -304,8 +356,12 @@ def print_summary(diagnostics: dict[str, Any]) -> None:
             print(f"  chunked_hidden_shape: {tuple(stage['chunked_hidden_shape'])}")
         if "region_boundary_density" in stage:
             print(f"  region_boundary_density: {stage['region_boundary_density']}")
+        if "region_boundary_probability_mean" in stage:
+            print(f"  region_boundary_probability_mean: {stage['region_boundary_probability_mean']}")
         if "motif_break_rate" in stage:
             print(f"  motif_break_rate: {stage['motif_break_rate']}")
+        if "motif_internal_boundary_count_mean" in stage:
+            print(f"  motif_internal_boundary_count_mean: {stage['motif_internal_boundary_count_mean']}")
 
 
 def main() -> int:
@@ -315,8 +371,9 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--seq-len", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--synthetic-mode", choices=["random", "regions"], default="random")
+    parser.add_argument("--synthetic-mode", choices=SYNTHETIC_MODES, default="random")
     parser.add_argument("--save-json", default=None)
+    parser.add_argument("--backward", action="store_true", help="Run loss.backward() after collecting diagnostics.")
     args = parser.parse_args()
 
     diagnostics = run_diagnostics(
@@ -326,6 +383,7 @@ def main() -> int:
         seq_len=args.seq_len,
         seed=args.seed,
         synthetic_mode=args.synthetic_mode,
+        run_backward=args.backward,
     )
     print_summary(diagnostics)
 
