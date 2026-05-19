@@ -7,16 +7,18 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean
+from typing import Iterable
 
 
-METRIC_MAP = {
-    "compression_ratio": "stage1_compression_ratio_mean",
-    "boundary_density": "stage1_post_merge_boundary_density",
-    "motif_break_rate": "motif_break_rate",
-    "repeat_boundary_density": "repeat_boundary_density",
-    "conserved_boundary_density": "conserved_boundary_density",
-    "ratio_loss": "ratio_loss",
-}
+METRIC_COLUMNS = [
+    "stage1_compression_ratio_mean",
+    "stage1_post_merge_boundary_density",
+    "motif_break_rate",
+    "repeat_boundary_density",
+    "conserved_boundary_density",
+    "neutral_boundary_density",
+    "ratio_loss",
+]
 
 
 def as_float(value: str):
@@ -33,23 +35,71 @@ def read_rows(path: Path) -> list[dict[str, str]]:
         return [row for row in csv.DictReader(handle) if row.get("status") == "ok"]
 
 
-def grouped_means(rows: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, float | str]]:
-    groups: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+def group_mean_rows(rows: Iterable[dict[str, str]], group_keys: list[str]) -> dict[tuple[str, ...], dict[str, object]]:
+    groups: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        groups[(row["synthetic_mode"], row["seq_len"])].append(row)
+        groups[tuple(row.get(key, "") for key in group_keys)].append(row)
 
-    result: dict[tuple[str, str], dict[str, float | str]] = {}
-    for key, group_rows in groups.items():
-        summary: dict[str, float | str] = {
-            "synthetic_mode": key[0],
-            "seq_len": key[1],
-        }
-        for public_name, column in METRIC_MAP.items():
-            values = [as_float(row.get(column, "")) for row in group_rows]
+    result: dict[tuple[str, ...], dict[str, object]] = {}
+    for group_id, group_rows in groups.items():
+        summary: dict[str, object] = {key: value for key, value in zip(group_keys, group_id)}
+        summary["n"] = len(group_rows)
+        for metric in METRIC_COLUMNS:
+            values = [as_float(row.get(metric, "")) for row in group_rows]
             values = [value for value in values if value is not None]
-            summary[public_name] = mean(values) if values else ""
-        result[key] = summary
+            summary[metric] = mean(values) if values else ""
+        result[group_id] = summary
     return result
+
+
+def comparison_rows(
+    before_rows: list[dict[str, str]],
+    after_rows: list[dict[str, str]],
+    group_keys: list[str],
+) -> list[dict[str, object]]:
+    before = group_mean_rows(before_rows, group_keys)
+    after = group_mean_rows(after_rows, group_keys)
+    rows = []
+    for group_id in sorted(set(before) & set(after)):
+        row: dict[str, object] = {key: value for key, value in zip(group_keys, group_id)}
+        row["before_n"] = before[group_id].get("n", 0)
+        row["after_n"] = after[group_id].get("n", 0)
+        for metric in METRIC_COLUMNS:
+            before_value = before[group_id].get(metric, "")
+            after_value = after[group_id].get(metric, "")
+            row[f"{metric}_before"] = before_value
+            row[f"{metric}_after"] = after_value
+            row[f"{metric}_delta"] = (
+                after_value - before_value
+                if isinstance(before_value, float) and isinstance(after_value, float)
+                else ""
+            )
+        rows.append(row)
+    return rows
+
+
+def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    if not rows:
+        return
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def print_table(title: str, rows: list[dict[str, object]]) -> None:
+    print(title)
+    if not rows:
+        print("  no rows")
+        return
+    columns = list(rows[0].keys())
+    print("  " + "\t".join(columns))
+    for row in rows:
+        rendered = []
+        for column in columns:
+            value = row[column]
+            rendered.append(f"{value:.6f}" if isinstance(value, float) else str(value))
+        print("  " + "\t".join(rendered))
 
 
 def main() -> int:
@@ -59,49 +109,25 @@ def main() -> int:
     parser.add_argument("--output-dir", default="outputs/synthetic_training_compare")
     args = parser.parse_args()
 
-    before = grouped_means(read_rows(Path(args.before)))
-    after = grouped_means(read_rows(Path(args.after)))
+    before_rows = read_rows(Path(args.before))
+    after_rows = read_rows(Path(args.after))
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = []
-    keys = sorted(set(before) & set(after))
-    for key in keys:
-        row = {
-            "synthetic_mode": key[0],
-            "seq_len": key[1],
-        }
-        for metric in METRIC_MAP:
-            before_value = before[key].get(metric, "")
-            after_value = after[key].get(metric, "")
-            row[f"{metric}_before"] = before_value
-            row[f"{metric}_after"] = after_value
-            row[f"{metric}_delta"] = (
-                after_value - before_value
-                if isinstance(before_value, float) and isinstance(after_value, float)
-                else ""
-            )
-        rows.append(row)
+    by_mode = comparison_rows(before_rows, after_rows, ["synthetic_mode"])
+    by_length = comparison_rows(before_rows, after_rows, ["seq_len"])
+    by_mode_length = comparison_rows(before_rows, after_rows, ["synthetic_mode", "seq_len"])
 
-    columns = ["synthetic_mode", "seq_len"]
-    for metric in METRIC_MAP:
-        columns.extend([f"{metric}_before", f"{metric}_after", f"{metric}_delta"])
+    write_csv(output_dir / "comparison_by_mode.csv", by_mode)
+    write_csv(output_dir / "comparison_by_length.csv", by_length)
+    write_csv(output_dir / "comparison_by_mode_length.csv", by_mode_length)
 
-    output_path = output_dir / "comparison_by_mode.csv"
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print("Tokenizer diagnostics before/after comparison:")
-    print("\t".join(columns))
-    for row in rows:
-        rendered = []
-        for column in columns:
-            value = row[column]
-            rendered.append(f"{value:.6f}" if isinstance(value, float) else str(value))
-        print("\t".join(rendered))
-    print(f"comparison_csv: {output_path}")
+    print_table("Tokenizer diagnostics before/after by synthetic_mode:", by_mode)
+    print_table("\nTokenizer diagnostics before/after by seq_len:", by_length)
+    print_table("\nTokenizer diagnostics before/after by synthetic_mode + seq_len:", by_mode_length)
+    print(f"\ncomparison_by_mode_csv: {output_dir / 'comparison_by_mode.csv'}")
+    print(f"comparison_by_length_csv: {output_dir / 'comparison_by_length.csv'}")
+    print(f"comparison_by_mode_length_csv: {output_dir / 'comparison_by_mode_length.csv'}")
     return 0
 
 

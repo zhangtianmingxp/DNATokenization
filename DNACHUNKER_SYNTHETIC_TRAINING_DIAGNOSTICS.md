@@ -34,7 +34,34 @@ conda run -n tokenize python scripts/train_original_synthetic_mlm.py \
 conda run -n tokenize bash scripts/run_synthetic_training_diagnostic_experiment.sh
 ```
 
-Environment variables such as `STEPS`, `SEQ_LENS`, `BATCH_SIZE`, and `OUT` can override the shell script defaults.
+Environment variables can override the shell script defaults:
+
+```bash
+STEPS=20 \
+BATCH_SIZE=2 \
+SEQ_LENS=64,128 \
+SEEDS=1,2 \
+SYNTHETIC_MODES=random,regions,repeat_heavy,motif_heavy,conserved_heavy \
+DEVICE=cuda \
+OUTPUT_DIR=outputs/synthetic_training_diagnostics \
+CONFIG=configs/smoke_original_dnachunker.yaml \
+LR=1e-4 \
+MASK_PROB=0.15 \
+conda run -n tokenize bash scripts/run_synthetic_training_diagnostic_experiment.sh
+```
+
+`OUT` and `MODES` are still accepted as backwards-compatible aliases for `OUTPUT_DIR` and `SYNTHETIC_MODES`.
+
+## Run A Quick Debug Version
+
+```bash
+STEPS=5 \
+SEQ_LENS=64 \
+SEEDS=1 \
+SYNTHETIC_MODES=regions \
+OUTPUT_DIR=outputs/synthetic_training_debug_full \
+conda run -n tokenize bash scripts/run_synthetic_training_diagnostic_experiment.sh
+```
 
 ## Output Files
 
@@ -61,6 +88,30 @@ Checkpoint loading:
 Comparison:
 
 - `compare/comparison_by_mode.csv`
+- `compare/comparison_by_length.csv`
+- `compare/comparison_by_mode_length.csv`
+- `BASELINE_REPORT.md`
+
+Directory structure:
+
+```text
+outputs/synthetic_training_diagnostics/
+  before/
+    summary.csv
+    run_*.json
+  train/
+    step_000000.pt
+    final.pt
+    train_log.csv
+  after/
+    summary.csv
+    run_*.json
+  compare/
+    comparison_by_mode.csv
+    comparison_by_length.csv
+    comparison_by_mode_length.csv
+  BASELINE_REPORT.md
+```
 
 ## Metrics To Inspect
 
@@ -72,6 +123,14 @@ Comparison:
 - repeat boundary-density delta
 - conserved/motif-rich boundary-density delta
 - ratio-loss delta
+
+`comparison_by_mode.csv` averages over sequence lengths and seeds for each synthetic mode. Use it for the broadest view of whether a short synthetic training run changed boundary density or compression behavior in a controlled mode.
+
+`comparison_by_length.csv` averages over modes and seeds for each sequence length. Use it to check whether changes are length-sensitive.
+
+`comparison_by_mode_length.csv` keeps both synthetic mode and sequence length, and is the most detailed compact CSV.
+
+`BASELINE_REPORT.md` summarizes the run counts, training loss trend, ratio-loss trend, and the comparison CSVs in Markdown tables.
 
 ## How This Informs Later Biological Prior Work
 
