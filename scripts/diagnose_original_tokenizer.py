@@ -48,6 +48,31 @@ def choose_device(requested: str) -> torch.device:
     return torch.device(requested)
 
 
+def extract_model_state_dict(checkpoint: Any) -> dict[str, torch.Tensor]:
+    if isinstance(checkpoint, dict):
+        if "model_state_dict" in checkpoint:
+            return checkpoint["model_state_dict"]
+        if "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+            if any(key.startswith("model.") for key in state_dict):
+                return {key.removeprefix("model."): value for key, value in state_dict.items()}
+            return state_dict
+    return checkpoint
+
+
+def load_checkpoint(
+    model: HNetTransformerForMaskedLM,
+    checkpoint_path: str | Path | None,
+    device: torch.device,
+) -> str | None:
+    if checkpoint_path is None:
+        return None
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = extract_model_state_dict(checkpoint)
+    model.load_state_dict(state_dict, strict=True)
+    return str(checkpoint_path)
+
+
 def tensor_stats(tensor: torch.Tensor) -> dict[str, Any]:
     values = tensor.detach().float().cpu()
     return {
@@ -247,6 +272,7 @@ def run_diagnostics(
     seed: int | None = None,
     synthetic_mode: str = "random",
     run_backward: bool = False,
+    checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     ensure_triton_compiler()
     cfg = load_config(REPO_ROOT / config)
@@ -259,6 +285,7 @@ def run_diagnostics(
 
     model_config = HNetConfig(**cfg["model"])
     model = HNetTransformerForMaskedLM(model_config).to(torch_device)
+    loaded_checkpoint = load_checkpoint(model, checkpoint, torch_device)
     model.train()
 
     synthetic = make_inputs(synthetic_mode, batch_size, seq_len, torch_device)
@@ -285,6 +312,8 @@ def run_diagnostics(
     diagnostics: dict[str, Any] = {
         "model_class": model.__class__.__name__,
         "device": str(torch_device),
+        "checkpoint": loaded_checkpoint,
+        "checkpoint_strict": True if loaded_checkpoint is not None else None,
         "synthetic_mode": synthetic_mode,
         "synthetic_metadata": synthetic.metadata,
         "input_shape": list(input_ids.shape),
@@ -374,6 +403,7 @@ def main() -> int:
     parser.add_argument("--synthetic-mode", choices=SYNTHETIC_MODES, default="random")
     parser.add_argument("--save-json", default=None)
     parser.add_argument("--backward", action="store_true", help="Run loss.backward() after collecting diagnostics.")
+    parser.add_argument("--checkpoint", default=None)
     args = parser.parse_args()
 
     diagnostics = run_diagnostics(
@@ -384,6 +414,7 @@ def main() -> int:
         seed=args.seed,
         synthetic_mode=args.synthetic_mode,
         run_backward=args.backward,
+        checkpoint=args.checkpoint,
     )
     print_summary(diagnostics)
 

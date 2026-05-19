@@ -173,6 +173,7 @@ def main() -> int:
     parser.add_argument("--max-runs", type=int, default=None)
     parser.add_argument("--no-backward", action="store_true", default=True)
     parser.add_argument("--backward", dest="no_backward", action="store_false")
+    parser.add_argument("--checkpoint", default=None)
     args = parser.parse_args()
 
     seq_lens = parse_csv_arg(args.seq_lens, int)
@@ -203,6 +204,7 @@ def main() -> int:
                         seed=seed,
                         synthetic_mode=mode,
                         run_backward=not args.no_backward,
+                        checkpoint=args.checkpoint,
                     )
                     json_path.write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
                     rows.append(
